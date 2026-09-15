@@ -42,6 +42,7 @@ LOG_FILE = "bot.log"
 MSC = ZoneInfo("Europe/Moscow")         # все даты считаются по Москве
 CHECK_INTERVAL_SECONDS = 3600           # период проверки долга — раз в час
 MAX_SEPARATE_MESSAGES = 3               # дольше этого долга — одно сводное сообщение
+COMPLIMENT_MULTILINE_MARKER = "---"      # строка-маркер: между такими строками — один многострочный комплимент
 
 # ── Логирование: файл + консоль ──────────────────────────────────────────────
 logging.basicConfig(
@@ -398,22 +399,59 @@ async def cmd_load_reasons(message: Message, bot: Bot) -> None:
         await message.answer("Ошибка при загрузке причин — см. bot.log.")
 
 
+def parse_compliments(lines: list[str]) -> list[str]:
+    """Комплименты из строк: обычные — по одной на строку; блок между
+    строками-маркерами «---» собирается в один многострочный комплимент."""
+    compliments: list[str] = []
+    buffer: list[str] = []
+    in_multiline = False
+    for line in lines:
+        if line == COMPLIMENT_MULTILINE_MARKER:
+            if buffer:
+                compliments.append("\n".join(buffer))
+                buffer = []
+            in_multiline = not in_multiline
+            continue
+        if in_multiline:
+            buffer.append(line)
+        else:
+            compliments.append(line)
+    if buffer:
+        compliments.append("\n".join(buffer))
+    return compliments
+
+
 @dp.message(Command("load_compliments"))
 async def cmd_load_compliments(message: Message, bot: Bot) -> None:
-    """Загрузка комплиментов для кнопки «Узнать ценность»."""
+    """Загрузка комплиментов для кнопки «Узнать ценность».
+    Каждая строка — отдельный комплимент; блок между строками «---»
+    — один многострочный комплимент. Работает и с .txt файлом."""
     if not is_admin(message.from_user.id):
         return
     try:
         lines = await extract_lines(message, bot)
         if not lines:
-            await message.answer("Не нашёл ни одной строки — пришли комплименты по одной на строку или .txt файлом.")
+            await message.answer(
+                "Не нашёл ни одной строки — пришли комплименты, например:\n"
+                "/load_compliments\n"
+                "ты красивая\n"
+                "---\n"
+                "ты самая лучшая,\n"
+                "я это знаю точно.\n"
+                "---"
+            )
             return
+        compliments = parse_compliments(lines)
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.executemany("INSERT INTO compliments (text) VALUES (?)", [(l,) for l in lines])
+            await db.executemany(
+                "INSERT INTO compliments (text) VALUES (?)", [(c,) for c in compliments]
+            )
             await db.commit()
             total = (await (await db.execute("SELECT COUNT(*) FROM compliments")).fetchone())[0]
-        await message.answer(f"Загружено комплиментов: {len(lines)}. Всего в базе: {total}.")
-        logger.info("Админ загрузил %d комплиментов (всего %d)", len(lines), total)
+        await message.answer(
+            f"Загружено комплиментов: {len(compliments)}. Всего в базе: {total}."
+        )
+        logger.info("Админ загрузил %d комплиментов (всего %d)", len(compliments), total)
     except Exception:
         logger.exception("Сбой при загрузке комплиментов")
         await message.answer("Ошибка при загрузке комплиментов — см. bot.log.")
