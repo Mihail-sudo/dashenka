@@ -113,8 +113,14 @@ async def init_db() -> None:
             "id INTEGER PRIMARY KEY, text TEXT, last_sent_id INTEGER)"
         )
         await db.execute(
-            "CREATE TABLE IF NOT EXISTS why_text (id INTEGER PRIMARY KEY, text TEXT)"
+            "CREATE TABLE IF NOT EXISTS why_text ("
+            "id INTEGER PRIMARY KEY, text TEXT, last_sent_id INTEGER)"
         )
+        # для старых БД, где last_sent_id ещё не было (колонка появится в новой таблице)
+        try:
+            await db.execute("ALTER TABLE why_text ADD COLUMN last_sent_id INTEGER")
+        except aiosqlite.OperationalError:
+            pass  # колонка уже есть
         await db.execute(
             "CREATE TABLE IF NOT EXISTS diary_state ("
             "id INTEGER PRIMARY KEY, current_day INTEGER DEFAULT 0, last_sent_date TEXT)"
@@ -335,13 +341,28 @@ async def msg_auction_value(message: Message) -> None:
 
 @dp.message(F.text == "❤️ Почему она?")
 async def msg_auction_why(message: Message) -> None:
-    """Кнопка «❤️ Почему она?»: заранее написанный текст."""
+    """Кнопка «❤️ Почему она?»: случайный текст, не повторяя прошлый."""
     if not is_girl(message.from_user.id):
         return
     try:
         async with aiosqlite.connect(DB_PATH) as db:
-            row = await (await db.execute("SELECT text FROM why_text WHERE id = 1")).fetchone()
-            text = row[0] if row else "Я ещё не написал, почему именно она 😌"
+            last = await (await db.execute(
+                "SELECT last_sent_id FROM why_text WHERE last_sent_id IS NOT NULL"
+                " ORDER BY id DESC LIMIT 1"
+            )).fetchone()
+            last_id = last[0] if last else None
+
+            all_rows = await (await db.execute("SELECT id, text FROM why_text")).fetchall()
+            if not all_rows:
+                text = "Я ещё не написал, почему именно она 😌"
+            else:
+                pool = [r for r in all_rows if r[0] != last_id] or all_rows
+                chosen = random.choice(pool)
+                # запоминаем, какой текст «Почему она?» уже был показан
+                await db.execute(
+                    "UPDATE why_text SET last_sent_id = ? WHERE id = ?", (chosen[0], chosen[0])
+                )
+                text = chosen[1]
             await db.execute(
                 "UPDATE stats SET button_why_clicks = button_why_clicks + 1 WHERE id = 1"
             )
@@ -458,21 +479,30 @@ async def cmd_load_compliments(message: Message, bot: Bot) -> None:
 
 
 @dp.message(Command("set_why"))
-async def cmd_set_why(message: Message) -> None:
-    """Установка текста для кнопки «Почему она?» (можно многострочный)."""
+async def cmd_set_why(message: Message, bot: Bot) -> None:
+    """Установка текстов «Почему она?»: как у комплиментов — каждая строка
+    отдельный текст, блок между «---» один многострочный. .txt тоже можно.
+    ЗАМЕНЯЕТ все прошлые тексты кнопки."""
     if not is_admin(message.from_user.id):
         return
     try:
-        body = message_body(message)
-        if not body:
-            await message.answer("Пришли текст после команды, например: /set_why Потому что…")
+        lines = await extract_lines(message, bot)
+        if not lines:
+            await message.answer(
+                "Пришли текст после команды, например:\n"
+                "/set_why Потому что…\n"
+                "или несколько, разделяя «---» для многострочных."
+            )
             return
+        texts = parse_compliments(lines)
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute("DELETE FROM why_text")
-            await db.execute("INSERT INTO why_text (id, text) VALUES (1, ?)", (body,))
+            await db.executemany(
+                "INSERT INTO why_text (text) VALUES (?)", [(t,) for t in texts]
+            )
             await db.commit()
-        await message.answer("Текст «Почему она?» сохранён ✅")
-        logger.info("Обновлён текст «Почему она?»")
+        await message.answer(f"Сохранено текстов «Почему она?»: {len(texts)} ✅")
+        logger.info("Обновлён текст «Почему она?»: %d шт", len(texts))
     except Exception:
         logger.exception("Сбой при сохранении текста «Почему она?»")
         await message.answer("Ошибка при сохранении — см. bot.log.")
@@ -605,7 +635,7 @@ if __name__ == "__main__":
 #    /reset_diary       — сброс счётчика дней
 #    /status            — остаток причин, текущий день, дата отправки, долг
 #    /load_compliments  — комплименты для кнопки «💎 Узнать ценность»
-#    /set_why           — текст для кнопки «❤️ Почему она?» (можно многострочный)
+#    /set_why           — тексты «❤️ Почему она?» (несколько; «---» = один многострочный)
 #    /auction_stats     — сколько раз нажаты кнопки
 #
 # Догоняющая отправка: бот помнит дату последней отправки (МСК) и проверяет
