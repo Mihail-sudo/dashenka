@@ -4,7 +4,7 @@
   1) Дневник ценности — каждый день бот отправляет девушке причину, почему
      она ценна. Если бот был выключен — пропущенные дни «догоняются» сразу
      при запуске и раз в час по расписанию (см. СТРУКТУРА, ДОГОНЯЮЩАЯ ОТПРАВКА).
-  2) Аукцион — команда /start показывает приветствие и две inline-кнопки
+  2) Аукцион — команда /start показывает приветствие и reply-кнопки
      «💎 Узнать ценность» (случайный комплимент) и «❤️ Почему она?».
 
 Бот рассчитан ровно на двух людей: ADMIN_ID (управление) и GIRL_ID (девушка).
@@ -23,7 +23,7 @@ import aiosqlite
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from dotenv import load_dotenv
@@ -269,15 +269,16 @@ async def check_and_send_missed_reasons() -> None:
 
 
 # ── АУКЦИОН: приветствие и кнопки ────────────────────────────────────────────
-def auction_keyboard() -> InlineKeyboardMarkup:
-    """Две кнопки: комплимент и «Почему она?»."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+def auction_keyboard() -> ReplyKeyboardMarkup:
+    """Две кнопки-реплики: комплимент и «Почему она?»."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
             [
-                InlineKeyboardButton(text="💎 Узнать ценность", callback_data="auction_value"),
-                InlineKeyboardButton(text="❤️ Почему она?", callback_data="auction_why"),
+                KeyboardButton(text="💎 Узнать ценность"),
+                KeyboardButton(text="❤️ Почему она?"),
             ]
-        ]
+        ],
+        resize_keyboard=True,
     )
 
 
@@ -297,11 +298,10 @@ async def cmd_start(message: Message) -> None:
     await message.answer(text, reply_markup=auction_keyboard())
 
 
-@dp.callback_query(F.data == "auction_value")
-async def cb_auction_value(query: CallbackQuery) -> None:
+@dp.message(F.text == "💎 Узнать ценность")
+async def msg_auction_value(message: Message) -> None:
     """Кнопка «💎 Узнать ценность»: случайный комплимент, не повторяя прошлый."""
-    await query.answer()  # гасим «часики» на кнопке у любого, кто нажал
-    if not is_girl(query.from_user.id):
+    if not is_girl(message.from_user.id):
         return
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -332,11 +332,10 @@ async def cb_auction_value(query: CallbackQuery) -> None:
         logger.exception("Сбой при отправке комплимента")
 
 
-@dp.callback_query(F.data == "auction_why")
-async def cb_auction_why(query: CallbackQuery) -> None:
+@dp.message(F.text == "❤️ Почему она?")
+async def msg_auction_why(message: Message) -> None:
     """Кнопка «❤️ Почему она?»: заранее написанный текст."""
-    await query.answer()
-    if not is_girl(query.from_user.id):
+    if not is_girl(message.from_user.id):
         return
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -510,7 +509,7 @@ async def cmd_auction_stats(message: Message) -> None:
 
 
 # ── Запуск / остановка ───────────────────────────────────────────────────────
-async def on_startup(dispatcher: Dispatcher, bot_instance: Bot) -> None:
+async def on_startup(dispatcher: Dispatcher, bot: Bot) -> None:
     """При старте: БД, планировщик и сразу одна проверка долга."""
     await init_db()
     scheduler.add_job(
@@ -526,7 +525,7 @@ async def on_startup(dispatcher: Dispatcher, bot_instance: Bot) -> None:
     await check_and_send_missed_reasons()
 
 
-async def on_shutdown(dispatcher: Dispatcher, bot_instance: Bot) -> None:
+async def on_shutdown(dispatcher: Dispatcher, bot: Bot) -> None:
     """Аккуратно останавливаем планировщик при завершении."""
     if scheduler.running:
         scheduler.shutdown(wait=False)
