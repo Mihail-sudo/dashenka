@@ -28,6 +28,11 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from dotenv import load_dotenv
 
+import http.server
+import socketserver
+import aiohttp
+from threading import Thread
+
 load_dotenv()
 
 # ── Константы из .env ────────────────────────────────────────────────────────
@@ -600,6 +605,34 @@ async def on_shutdown(dispatcher: Dispatcher, bot: Bot) -> None:
     logger.info("Бот остановлен")
 
 
+class PingHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write("Бот активен! ❤️".encode("utf-8"))
+
+def start_web_server():
+    port = int(os.environ.get("PORT", 8000))
+    server = socketserver.TCPServer(("0.0.0.0", port), PingHandler)
+    server.serve_forever()
+
+# === 2. САМОСТОЯТЕЛЬНЫЙ АВТОПИНГ В ИНТЕРНЕТ ===
+async def self_ping():
+    # Замените ссылку ниже на URL вашего приложения из панели управления Render!
+    url = "https://onrender.com"
+    
+    await asyncio.sleep(30)  # Даем боту время запуститься
+    async with aiohttp.ClientSession() as session:
+        while True:
+            try:
+                async with session.get(url) as response:
+                    print(f"[Pinger] Успешный пинг, статус: {response.status}")
+            except Exception as e:
+                print(f"[Pinger] Ошибка пинга: {e}")
+            await asyncio.sleep(600)  # Повторяем каждые 10 минут
+
+
 def main() -> None:
     global bot
     if not BOT_TOKEN:
@@ -612,6 +645,9 @@ def main() -> None:
     bot = Bot(BOT_TOKEN)
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
+
+    Thread(target=start_web_server, daemon=True).start()
+    asyncio.create_task(self_ping())
 
     asyncio.run(dp.start_polling(bot, skip_updates=True))
 
