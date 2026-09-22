@@ -595,6 +595,7 @@ async def on_startup(dispatcher: Dispatcher, bot: Bot) -> None:
     )
     scheduler.start()
     logger.info("Бот запущен, планировщик активен (интервал %d с)", CHECK_INTERVAL_SECONDS)
+    asyncio.create_task(self_ping())
     await check_and_send_missed_reasons()
 
 
@@ -647,7 +648,6 @@ def main() -> None:
     dp.shutdown.register(on_shutdown)
 
     Thread(target=start_web_server, daemon=True).start()
-    asyncio.create_task(self_ping())
 
     asyncio.run(dp.start_polling(bot, skip_updates=True))
 
