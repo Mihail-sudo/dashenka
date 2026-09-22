@@ -621,7 +621,7 @@ def start_web_server():
 # === 2. САМОСТОЯТЕЛЬНЫЙ АВТОПИНГ В ИНТЕРНЕТ ===
 async def self_ping():
     # Замените ссылку ниже на URL вашего приложения из панели управления Render!
-    url = "https://onrender.com"
+    url = "https://dashenka.onrender.com"
     
     await asyncio.sleep(30)  # Даем боту время запуститься
     async with aiohttp.ClientSession() as session:
