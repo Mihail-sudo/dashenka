@@ -313,7 +313,11 @@ async def cmd_start(message: Message) -> None:
 @dp.message(F.text == "💎 Узнать ценность")
 async def msg_auction_value(message: Message) -> None:
     """Кнопка «💎 Узнать ценность»: случайный комплимент, не повторяя прошлый."""
-    if not is_girl(message.from_user.id):
+    if not is_girl(message.from_user.id) and not is_admin(message.from_user.id):
+        logger.warning(f"Кто-то неизвестный стучиться в двери {message.from_user.id}")
+        return
+    if is_admin(message.from_user.id):
+        logger.info("Это я стучусь)) для виду")
         return
     try:
         async with aiosqlite.connect(DB_PATH) as db:
